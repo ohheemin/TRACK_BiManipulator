@@ -1,4 +1,4 @@
-# Interacting - BiManipulator
+# AVATAR
 
 트랙별 종합설계 프로젝트
 
