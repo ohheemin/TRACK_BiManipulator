@@ -4,7 +4,8 @@
     관절 인덱싱하고 3d 좌표 추출함
 
 """
-
+import sys
+sys.path.insert(0, "/home/ohheemin/.local/lib/python3.10/site-packages")
 import cv2
 import numpy as np
 import mediapipe as mp
@@ -13,7 +14,6 @@ import pyrealsense2 as rs
 COLOR_W, COLOR_H, FPS = 848, 480, 30
 DEPTH_W, DEPTH_H      = 848, 480
 
-# 표시할 관절 이름 
 LANDMARK_NAMES = [
     "nose", "left_eye_inner", "left_eye", "left_eye_outer",
     "right_eye_inner", "right_eye", "right_eye_outer",
@@ -32,7 +32,6 @@ LANDMARK_NAMES = [
     "left_foot_index", "right_foot_index",
 ]
 
-# 주요 관절만 3D 좌표를 화면에 표시 
 DISPLAY_INDICES = [
     0,   # nose
     11, 12,  # shoulders
@@ -43,13 +42,11 @@ DISPLAY_INDICES = [
     27, 28,  # ankles
 ]
 
-# 색상 (BGR)
 COLOR_JOINT   = (0,   255, 100)
 COLOR_TEXT    = (255, 255,   0)
 COLOR_TEXT_BG = (0,   0,     0)
 COLOR_SKEL    = (100, 200, 255)
 
-# MediaPipe Pose 연결 
 POSE_CONNECTIONS = mp.solutions.pose.POSE_CONNECTIONS
 
 
@@ -67,6 +64,10 @@ def draw_text_with_bg(img, text, pos, font_scale=0.38, thickness=1,
     cv2.addWeighted(overlay, alpha, img, 1 - alpha, 0, img)
     cv2.putText(img, text, (x, y), font, font_scale, text_color, thickness, cv2.LINE_AA)
 
+
+"""
+    뎁스카메라에서 초점거리, 주점거리로부터 뎁스 제외한 2d plane coordinate 추정
+"""
 
 def get_3d_point(depth_frame, intrinsics, px, py):
     """
@@ -90,7 +91,7 @@ def main():
     config.enable_stream(rs.stream.color, COLOR_W, COLOR_H, rs.format.bgr8, FPS)
     config.enable_stream(rs.stream.depth, DEPTH_W, DEPTH_H, rs.format.z16, FPS)
 
-    print("[INFO] RealSense D435 연결 중...")
+    print("리얼센스 뎁스카메라 연결")
     profile = pipeline.start(config)
 
     align = rs.align(rs.stream.color)
@@ -98,9 +99,9 @@ def main():
     color_profile   = profile.get_stream(rs.stream.color)
     intrinsics       = color_profile.as_video_stream_profile().get_intrinsics()
 
-    print(f"해상도: {COLOR_W}x{COLOR_H} @ {FPS}fps")
-    print(f"내부 파라미터: fx={intrinsics.fx:.1f}, fy={intrinsics.fy:.1f}, "
-          f"cx={intrinsics.ppx:.1f}, cy={intrinsics.ppy:.1f}")
+    # print(f"해상도: {COLOR_W}x{COLOR_H} @ {FPS}fps")
+    # print(f"내부 파라미터: fx={intrinsics.fx:.1f}, fy={intrinsics.fy:.1f}, "
+    #       f"cx={intrinsics.ppx:.1f}, cy={intrinsics.ppy:.1f}")
 
     mp_pose    = mp.solutions.pose
     pose_model = mp_pose.Pose(
