@@ -1,2 +1,15 @@
-# TRACK_BiManipulator
-트랙별 종합설계 프로젝트 - 반 휴머노이드 제작 프로젝트
+# AVATAR
+
+트랙별 종합설계 프로젝트
+
+3d reconstruction을 통한 Teleoperation System
+
+# 개발 환경
+
+Ubuntu 22.04
+
+GAZEBO sim Classic
+
+ROS2 Humble
+
+Dinamixel Wizard 2.0
