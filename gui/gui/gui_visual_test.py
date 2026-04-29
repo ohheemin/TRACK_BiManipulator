@@ -39,6 +39,28 @@ def _launch_ros2_launch(setup_script, package_name, launch_file, extra_args=None
     except Exception as e:
         print(f"[ERROR] Failed to launch {label}: {e}")
         return False
+    
+def _launch_ros2_run(setup_script, package_name, executable_name, extra_args=None, label="ROS2 Run", dedup_key=None):
+    run_cmd_parts = ["ros2", "run", package_name, executable_name]
+    if extra_args:
+        run_cmd_parts.extend(extra_args)
+    source_chain = f"source {setup_script}" if os.path.exists(setup_script) else "echo 'No workspace setup found'"
+    bash_command = f"source /opt/ros/humble/setup.bash && {source_chain} && {' '.join(run_cmd_parts)}"
+    
+    print(f"[DEBUG] {label} run command: {bash_command}")
+    try:
+        with _launch_process_lock:
+            if dedup_key:
+                existing = _launch_process_by_key.get(dedup_key)
+                if existing is not None and existing.poll() is None:
+                    return True
+            proc = subprocess.Popen(["bash", "-c", bash_command], preexec_fn=os.setsid)
+            if dedup_key:
+                _launch_process_by_key[dedup_key] = proc
+        return True
+    except Exception as e:
+        print(f"[ERROR] Failed to run {label}: {e}")
+        return False
 
 def _cleanup_processes_by_key(dedup_key):
     with _launch_process_lock:
@@ -121,7 +143,7 @@ class VisualTestGUI:
         content_wrapper.columnconfigure(2, weight=1) 
 
         # ==========================================
-        # [왼쪽 컬럼]: 패키지 제어 및 로봇 텔레메트리
+        # [왼쪽 컬럼]: 패키지 제어 및 로봇 스테이터스
         # ==========================================
         left_col = ctk.CTkFrame(content_wrapper, fg_color=ROOT_BG, corner_radius=0)
         left_col.grid(row=0, column=0, sticky="nsew", padx=(0, 15))
@@ -266,7 +288,7 @@ class VisualTestGUI:
 
     def toggle_realsense(self):
         if not self.realsense_online:
-            if _launch_ros2_launch(WORKSPACE_SETUP, "realsense2_camera", "rs_launch.py", ["align_depth.enable:=true"], "RealSense", "realsense_key"):
+            if _launch_ros2_run(WORKSPACE_SETUP, "avatar", "vision.py", [], "RealSense", "realsense_key"):
                 self.realsense_online = True
                 self.lbl_rs_status.configure(text="[ D435i Online ]", text_color="#4CAF50")
                 self.btn_realsense.configure(text="Stop RealSense", fg_color="#D81B60")
