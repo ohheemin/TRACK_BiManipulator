@@ -15,6 +15,19 @@ import mediapipe as mp
 import pyrealsense2 as rs
 from collections import deque
 
+"""
+    칼만필터 없애서 연산량 경감시킨 버전
+    데드밴드, 평균값 계산만 해서
+    필터링한 후에 넘김. 
+    플래닝에서도 rukig 없이 하는 것이 연산량 경감에 도움을 줌
+    rukig 없이
+
+    [추가] 3프레임 상승 추세 필터:
+    최근 3프레임을 비교하여 전반적으로 상승 추세인데
+    중간에 감소하는 구간이 있으면(튀는 값) 해당 감소를 무시하고
+    1→3 프레임의 상승세만 반영함.
+"""
+
 COLOR_W, COLOR_H, FPS = 848, 480, 30
 DEPTH_W, DEPTH_H      = 848, 480
 
@@ -86,8 +99,8 @@ COLOR_LH_CV   = (255, 180,  50)
 COLOR_RH_CV   = (50,  180, 255)
 
 # ═══ 노이즈 필터 파라미터 ═════════════════════════════════════════════════════
-MOVING_AVG_N  = 5
-DEADBAND_DEG  = 1.0
+MOVING_AVG_N  = 10
+DEADBAND_DEG  = 0.3
 DEADBAND_RAD  = math.radians(DEADBAND_DEG)
 # KF_Q          = 1e-3   # 칼만필터 파라미터 (비활성화)
 # KF_R          = 1e-1   # 칼만필터 파라미터 (비활성화)
@@ -128,23 +141,50 @@ class JointFilter:
         # self.kf       = [KalmanFilter1D() for _ in range(n_joints)]  # 칼만필터 비활성화
         self.buffers  = [deque(maxlen=window) for _ in range(n_joints)]
         self.last_pub = [0.0] * n_joints
+        # 3프레임 추세 판단을 위한 최근 avg 이력 (조인트별, 최대 3개 보관)
+        self.trend_buf = [deque(maxlen=3) for _ in range(n_joints)]
 
     def update(self, thetas: list) -> list:
         filtered = []
         for i, th in enumerate(thetas):
-            # kf_out = self.kf[i].update(th)      # 칼만필터 비활성화
-            # self.buffers[i].append(kf_out)       # 칼만 출력을 버퍼에 추가 (비활성화)
-            self.buffers[i].append(th)             # 원시값을 바로 버퍼에 추가
+            # ── 기존: 이동평균 ──────────────────────────────────────────────
+            # self.kf[i].update(th)  # 칼만필터 비활성화
+            self.buffers[i].append(th)
             avg = float(np.mean(self.buffers[i]))
-            if abs(avg - self.last_pub[i]) < self.deadband:
+
+            # ── 추가: 3프레임 상승 추세 필터 ────────────────────────────────
+            # trend_buf 에는 데드밴드 적용 전 avg 값을 기록해 추세를 판단한다.
+            self.trend_buf[i].append(avg)
+
+            candidate = avg  # 기본값: 현재 avg 그대로 사용
+
+            if len(self.trend_buf[i]) == 3:
+                f0, f1, f2 = self.trend_buf[i]   # 가장 오래된 → 최신 순
+                overall_rising = f2 > f0          # 1→3 전체 방향: 상승
+
+                if overall_rising and f1 < f0:
+                    # 전체는 상승이나 중간(f1)이 감소 → f1이 튄 것
+                    # f0→f2 의 선형 보간값으로 candidate 대체
+                    candidate = (f0 + f2) / 2.0
+
+            # ── 기존: 데드밴드 적용 ─────────────────────────────────────────
+            if abs(candidate - self.last_pub[i]) < self.deadband:
                 filtered.append(self.last_pub[i])
             else:
-                self.last_pub[i] = avg
-                filtered.append(avg)
+                self.last_pub[i] = candidate
+                filtered.append(candidate)
+
         return filtered
 
 
-# ═══ ROS2 노드 
+"""
+    topic 발행하는 클래스
+    /robot/joint_states는 position, effort를 msg에서 받아서 사용해야 함
+    position은 칼만 없이 데드벤드, 평균만 적용하고, effort는 관절 계산 끝난 후에 프레임 발행
+    관절각 계산하는 데에 시간이 좀 걸려서 아예 프레임
+    처음 받아올 때 기준으로 프레임 인덱스 publish하는 /vision_clock 넣음
+"""
+
 class VisionPublisher(Node):
     
     JOINT_NAMES = ["joint_1","joint_2","joint_3","joint_4","joint_5","joint_6"]
@@ -277,7 +317,7 @@ def cam_to_global_hand(rhand_pts: list, global_matrix: np.ndarray, joint_index: 
     v = inv_GM @ pt_col_v
     return np.array([v[0,0], v[1,0], v[2,0]])
 
-
+#planning에서 수정한 것
 ################################################################
 def arm_joint_angles(arm_coords: dict, global_matrix, joint=None):
     if joint is None:
@@ -412,7 +452,7 @@ def compute_dh_joint_angles(arm_coords: dict, pose_lms, rhand_pts: list):
     el_vec_cam = R_mat @ el_vec if el_vec is not None else None
     wr_vec_cam = R_mat @ wr_vec if wr_vec is not None else None
 
-    return [theta1, theta2, theta3, theta4, 0.3 * theta5, -theta6], (el_vec_cam, wr_vec_cam)
+    return [theta1, theta2, theta3, theta4, 0.3 * theta5, - 0.6 * theta6], (el_vec_cam, wr_vec_cam)
 
 
 def _project(pt3d, intrinsics):
@@ -615,7 +655,7 @@ def main():
                          .as_video_stream_profile().get_intrinsics())
     print(f"{COLOR_W}x{COLOR_H}@{FPS}fps fx={intrinsics.fx:.1f}")
     # print(f"Filter: Kalman(Q={KF_Q},R={KF_R})  MovingAvg(N={MOVING_AVG_N})  Deadband({DEADBAND_DEG:.1f}deg)")  # 칼만필터 비활성화
-    print(f"Filter: MovingAvg(N={MOVING_AVG_N})  Deadband({DEADBAND_DEG:.1f}deg)")
+    print(f"Filter: MovingAvg(N={MOVING_AVG_N})  Deadband({DEADBAND_DEG:.1f}deg)  TrendFilter(3-frame)")
 
     holistic = mp.solutions.holistic.Holistic(
         static_image_mode=False, model_complexity=1,
@@ -634,8 +674,8 @@ def main():
     depth_win_open = False
     frame_idx      = 0
 
-    print("Running — Q/ESC:Quit  S:Save  D:Depth")
-    print("ROS2: /robot/joint_states  /hand_open/right  /vision_clock")
+    #print("Running — Q/ESC:Quit  S:Save  D:Depth")
+    #print("ROS2: /robot/joint_states  /hand_open/right  /vision_clock")
 
     try:
         while True:
@@ -648,7 +688,11 @@ def main():
             if not color_frame or not depth_frame:
                 continue
 
-            # ── /vision_clock: 프레임 수신 직후, mediapipe 추론 전에 발행 ──
+            """
+                /vision_clock은 프레임 수신 직후에 발행함
+                이는 미디어파이프에서 스켈레톤 모델을 받아오고, 관절각을 계산하기 전에
+                수행되는 알고리즘 (처음부터 발행)
+            """
             ros_node.publish_clock(frame_idx)
 
             t0           = color_frame.get_frame_metadata(rs.frame_metadata_value.time_of_arrival)
@@ -745,7 +789,8 @@ def main():
                                   (w-230, y_ang), font_scale=0.26, text_color=(180,180,130))
                 y_ang += 12
 
-            # 칼만 오버레이
+            # 칼만 오버레이하는 부분 - 칼만 필터 없으니까 제외함
+
             # y_ang += 4
             # draw_text_with_bg(disp, "[kalman]", (w-230, y_ang),
             #                   font_scale=0.34, text_color=(100,220,255))
@@ -756,7 +801,7 @@ def main():
             #     y_ang += 12
 
             y_ang += 4
-            draw_text_with_bg(disp, "[pub] avg+dead", (w-230, y_ang),
+            draw_text_with_bg(disp, "[pub] avg+dead+trend", (w-230, y_ang),
                               font_scale=0.34, text_color=(255,255,100))
             y_ang += 14
             for lbl, th in zip(labels, filtered_thetas):
@@ -787,7 +832,7 @@ def main():
             draw_text_with_bg(disp, "wr_vec: Hand palm nrm",  (w-120, y_mat+80),
                               font_scale=0.34, text_color=(255, 100, 220))
             draw_text_with_bg(disp,
-                f"Avg N={MOVING_AVG_N}  Dead={DEADBAND_DEG:.1f}deg",
+                f"Avg N={MOVING_AVG_N}  Dead={DEADBAND_DEG:.1f}deg  Trend=3f",
                 (w-230, y_mat+96), font_scale=0.32, text_color=(180,180,255))
 
             draw_text_with_bg(disp,
@@ -804,14 +849,14 @@ def main():
                 (10, h-50), font_scale=0.42, text_color=(100,255,180))
             draw_text_with_bg(disp, f"Frame:{frame_idx}", (10, 22),
                               font_scale=0.45, text_color=(200,255,200))
-            draw_text_with_bg(disp, "Q/ESC:Quit S:Save D:Depth", (10, 44),
-                              font_scale=0.40, text_color=(200,200,200))
+            # draw_text_with_bg(disp, "Q/ESC:Quit S:Save D:Depth", (10, 44),
+            #                   font_scale=0.40, text_color=(200,200,200))
 
             detected  = "Detected" if result.pose_landmarks else "No Person"
             dot_color = (0,255,0) if result.pose_landmarks else (0,0,255)
             cv2.circle(disp, (w-20, 20), 8, dot_color, -1)
-            draw_text_with_bg(disp, detected, (w-110, 24),
-                              font_scale=0.40, text_color=(255,255,255))
+            # draw_text_with_bg(disp, detected, (w-110, 24),
+            #                   font_scale=0.40, text_color=(255,255,255))
 
             for s, lms_flag, col in [
                 ("L-hand O" if result.left_hand_landmarks else "L-hand X",

@@ -14,6 +14,7 @@ install(PROGRAMS
   src/pose.py
   src/vision.py
   src/vision_nk.py
+  src/gui.py
   src/clock.py
   DESTINATION lib/${PROJECT_NAME}
 )

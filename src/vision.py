@@ -627,7 +627,7 @@ def main():
     arm_coords     = {}
     lhand_pts      = []
     rhand_pts      = []
-    frame_lat_buf  = deque(maxlen=30)
+    frame_lat_buf  = deque(maxlen=60)
     lat_frame_ms   = 0.0
     lat_frame_avg  = 0.0
     show_depth     = False
