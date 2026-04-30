@@ -299,7 +299,7 @@ class VisualTestGUI:
             self.btn_realsense.configure(text="Start RealSense", fg_color="#006064")
 
     def mock_start_planning(self):
-        if _launch_ros2_launch(WORKSPACE_SETUP, "my_planning_package", "robot_planning.launch.py", None, "RobotPlanning", "planning_key"):
+        if _launch_ros2_run(WORKSPACE_SETUP, "avatar", "dxl_subscriber.py", None, "RobotPlanning", "planning_key"):
             self.lbl_robot_status.configure(text="[ Planning Online ]", text_color="#4CAF50")
             self.btn_planning.configure(state="disabled")
 
